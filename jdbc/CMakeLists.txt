@@ -215,10 +215,8 @@ if(NOT SHOW_JDBC_WARNINGS)
 
   else()
 
-    add_compile_options(
-      -Wno-unused-parameter
-      -Wno-deprecated-declarations
-    )
+    set_compiler_flag(-Wno-unused-parameter)
+    set_compiler_flag(-Wno-deprecated-declarations)
 
   endif()
 
@@ -266,25 +264,12 @@ add_version_info(connector-jdbc
   "Implements MySQL Connector/C++ legacy JDBC API."
 )
 
+# Note: The MySQL::client target works (and is needed) both when linking
+# to the MySQL client library dynamically and statically. In the latter case
+# it brings additional linker options that are required (e.g. to resolve
+# dependencies of the client library code).
 
-
-# Note: When connector links statically to the client library, targets using
-# the connector must be able to find dependencies of the client library, such
-# as openssl libs. The MYSQL_EXTERNAL_SEARCHPATH variable set by DepFindMySQL.
-# cmake stores detected locations where client library dependencies that
-# are bundled with it can be found. We add it here as interface property
-# so that other targets that link with the connector will have library search
-# path correctly set in the compile line.
-#
-# TODO: Modify merge_libraries() logic to autmatically detect transitive link
-# directory path properties of merged targets and then set them on the merged
-# library target.
-
-if(MYSQLCLIENT_STATIC_LINKING)
-  target_link_directories(connector-jdbc INTERFACE
-    ${MYSQL_EXTERNAL_SEARCHPATH}
-  )
-endif()
+target_link_libraries(connector-jdbc PUBLIC MySQL::client)
 
 
 #
@@ -573,6 +558,18 @@ function(bundle_lib lib)
       DESTINATION "${INSTALL_LIB_DIR}"
       COMPONENT JDBCDll
     )
+    # Symlinks need to be created to allow authenticating
+    # plugins to load dependencies in MacOS
+    #
+    # NOTE: in Linux the dependencies are adressed in
+    #       a different way
+    install(CODE "
+      execute_process(
+        COMMAND ${CMAKE_COMMAND} -E create_symlink ../${lib_name} ${lib_name}
+        WORKING_DIRECTORY \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${INSTALL_LIB_DIR}/plugin\"
+      )
+    ")
+
     else()
       install(FILES ${lib}
         DESTINATION "${INSTALL_LIB_DIR}/private"
@@ -662,6 +659,26 @@ macro(bundle_libs to_bundle ignored)
     endif()
 
   endforeach()
+
+  if(APPLE)
+    # Create symlinks for OpenSSL dependencies in MacOS.
+    # The actual OpenSSL libraries should already be
+    # installed with XDevAPI connector.
+    # Other dependencies such as fido2 already have symlinks
+    # created at this stage.
+    install(CODE "
+      foreach(openssl_lib ssl crypto)
+        file(GLOB found_libs \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${INSTALL_LIB_DIR}/lib\${openssl_lib}.*dylib\")
+        foreach(lib_file \${found_libs})
+          get_filename_component(openssl_lib_name \${lib_file} NAME)
+          execute_process(
+            COMMAND ${CMAKE_COMMAND} -E create_symlink ../\${openssl_lib_name} \${openssl_lib_name}
+            WORKING_DIRECTORY \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${INSTALL_LIB_DIR}/plugin\"
+          )
+        endforeach(lib_file)
+      endforeach(openssl_lib)
+    ")
+  endif()
 
 endmacro(bundle_libs)
 

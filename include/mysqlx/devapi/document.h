@@ -360,6 +360,7 @@ public:
     CATCH_AND_WRAP
   }
 
+  virtual ~Value() {}
 
 public:
 
